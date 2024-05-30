@@ -5,8 +5,8 @@
 # -*- coding:utf-8 -*-
 import argparse
 import os
-from CodeT5.evaluator.CodeBLEU import weighted_ngram_match, bleu, dataflow_match, syntax_match
-
+from evaluator.CodeBLEU import weighted_ngram_match, bleu, dataflow_match, syntax_match
+#import weighted_ngram_match, bleu, dataflow_match, syntax_match
 
 def get_codebleu(refs, hyp, lang, params='0.25,0.25,0.25,0.25'):
     if not isinstance(refs, list):

@@ -1,12 +1,16 @@
-WORKDIR="your_CodeT5_path/CodeT5"
+WORKDIR="/home/xtu/lcj/codet5-lab4/CodeT5/CodeT5"
 export PYTHONPATH=$WORKDIR
+echo ${PYTHONPATH}
 
 TASK=${1}
 SUB_TASK=${2}
 MODEL_TAG=${3}
-GPU=${4}
+GPU=0,1
+#GPU=${4}
 DATA_NUM=${5}
 BS=${6}
+TRAIN_BS=$((${BS}*2))
+echo ${TRAIN_BS}
 LR=${7}
 SRC_LEN=${8}
 TRG_LEN=${9}
@@ -16,7 +20,7 @@ WARMUP=${12}
 MODEL_DIR=${13}
 SUMMARY_DIR=${14}
 RES_FN=${15}
-
+echo ${GPU}
 if [[ $DATA_NUM == -1 ]]; then
   DATA_TAG='all'
 else
@@ -62,8 +66,8 @@ elif [[ $MODEL_TAG == codet5_small ]]; then
   MODEL_PATH=Salesforce/codet5-small
 elif [[ $MODEL_TAG == codet5_base ]]; then
   MODEL_TYPE=codet5
-  TOKENIZER=Salesforce/codet5-base
-  MODEL_PATH=Salesforce/codet5-base
+  TOKENIZER=${WORKDIR}/codet5-base
+  MODEL_PATH=${WORKDIR}/codet5-base
 elif [[ $MODEL_TAG == codet5_large ]]; then
   MODEL_TYPE=codet5
   TOKENIZER=Salesforce/codet5-large
@@ -90,5 +94,5 @@ CUDA_VISIBLE_DEVICES=${GPU} \
   --tokenizer_name=${TOKENIZER}  --model_name_or_path=${MODEL_PATH} --data_dir ${WORKDIR}/data  \
   --cache_path ${CACHE_DIR}  --output_dir ${OUTPUT_DIR}  --summary_dir ${SUMMARY_DIR} \
   --save_last_checkpoints --always_save_model --res_dir ${RES_DIR} --res_fn ${RES_FN} \
-  --train_batch_size ${BS} --eval_batch_size ${BS} --max_source_length ${SRC_LEN} --max_target_length ${TRG_LEN} \
+  --train_batch_size ${TRAIN_BS} --eval_batch_size ${BS} --max_source_length ${SRC_LEN} --max_target_length ${TRG_LEN} \
   2>&1 | tee ${LOG}

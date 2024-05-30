@@ -27,6 +27,7 @@ import numpy as np
 from tqdm import tqdm
 import multiprocessing
 import time
+import pandas as pd
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
@@ -71,7 +72,9 @@ def eval_ppl_epoch(args, eval_data, eval_examples, model, tokenizer):
                 outputs = model(input_ids=source_ids, attention_mask=source_mask,
                                 labels=target_ids, decoder_attention_mask=target_mask)
                 loss = outputs.loss
-
+        
+        if args.n_gpu > 1:
+            loss = loss.mean()
         eval_loss += loss.item()
         batch_num += 1
     eval_loss = eval_loss / batch_num
@@ -102,7 +105,10 @@ def eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, split_tag,
 
                 top_preds = [pred[0].cpu().numpy() for pred in preds]
             else:
-                preds = model.generate(source_ids,
+                local_model = model
+                if isinstance(model, torch.nn.DataParallel):
+                    local_model = model.module
+                preds = local_model.generate(source_ids,
                                        attention_mask=source_mask,
                                        use_cache=True,
                                        num_beams=args.beam_size,
@@ -214,12 +220,15 @@ def main():
         logger.info("  Num epoch = %d", args.num_train_epochs)
 
         dev_dataset = {}
+        all_loss = dict()
+        columns = []
         global_step, best_bleu_em, best_ppl = 0, -1, 1e6
         not_loss_dec_cnt, not_bleu_em_inc_cnt = 0, 0 if args.do_eval_bleu else 1e6
 
         for cur_epoch in range(args.start_epoch, int(args.num_train_epochs)):
             bar = tqdm(train_dataloader, total=len(train_dataloader), desc="Training")
             nb_tr_examples, nb_tr_steps, tr_loss = 0, 0, 0
+            batch_loss = []
             model.train()
             for step, batch in enumerate(bar):
                 batch = tuple(t.to(args.device) for t in batch)
@@ -240,11 +249,11 @@ def main():
                 if args.gradient_accumulation_steps > 1:
                     loss = loss / args.gradient_accumulation_steps
                 tr_loss += loss.item()
-
+                batch_loss.append(loss.item())
                 nb_tr_examples += source_ids.size(0)
                 nb_tr_steps += 1
                 loss.backward()
-
+                
                 if nb_tr_steps % args.gradient_accumulation_steps == 0:
                     # Update parameters
                     optimizer.step()
@@ -252,8 +261,14 @@ def main():
                     scheduler.step()
                     global_step += 1
                     train_loss = round(tr_loss * args.gradient_accumulation_steps / (nb_tr_steps + 1), 4)
+                    
                     bar.set_description("[{}] Train loss {}".format(cur_epoch, round(train_loss, 3)))
 
+            #tb_writer.add_scalar('train_loss', round(tr_loss / (nb_tr_steps + 1), 4), cur_epoch)
+            all_loss[cur_epoch] = batch_loss
+            columns.append(cur_epoch)
+            logger.info("[+] epoch: %d, train_loss: %.4f", cur_epoch, round(tr_loss / (nb_tr_steps + 1), 4)) 
+           # logger.info(f"all_loss: {all_loss}, columns: {args.num_train_epochs}")
             if args.do_eval:
                 # Eval model with dev dataset
                 if 'dev_loss' in dev_dataset:
@@ -354,6 +369,8 @@ def main():
             logger.info("***** CUDA.empty_cache() *****")
             torch.cuda.empty_cache()
 
+        df = pd.DataFrame(all_loss, columns=columns)
+        df.to_csv(os.path.join(args.summary_dir, 'train_loss.csv'), index=False)
         if args.local_rank in [-1, 0] and args.data_num == -1:
             tb_writer.close()
         logger.info("Finish training and take %s", get_elapse_time(t0))
@@ -365,7 +382,10 @@ def main():
         for criteria in ['best-bleu']:
             file = os.path.join(args.output_dir, 'checkpoint-{}/pytorch_model.bin'.format(criteria))
             logger.info("Reload model from {}".format(file))
-            model.load_state_dict(torch.load(file))
+            if isinstance(model, torch.nn.DataParallel):
+                model.module.load_state_dict(torch.load(file))
+            else:
+                model.load_state_dict(torch.load(file))
             eval_examples, eval_data = load_and_cache_gen_data(args, args.test_filename, pool, tokenizer, 'test',
                                                                only_src=True, is_sample=False)
             result = eval_bleu_epoch(args, eval_data, eval_examples, model, tokenizer, 'test', criteria)
